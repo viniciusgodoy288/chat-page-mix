@@ -1,0 +1,366 @@
+<html><head><base href="https://websim.ai/live-chat/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatMix - Bate-papo ao vivo com vídeo</title>
+<script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.0/simplepeer.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.3.2/socket.io.js"></script>
+<style>
+  :root {
+    --primary-color: #3498db;
+    --secondary-color: #2ecc71;
+    --background-color: #ecf0f1;
+    --text-color: #34495e;
+    --accent-color: #e74c3c;
+  }
+
+  body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  header {
+    background-color: var(--primary-color);
+    color: white;
+    text-align: center;
+    padding: 1rem;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 2.5rem;
+  }
+
+  main {
+    flex-grow: 1;
+    display: flex;
+    padding: 2rem;
+  }
+
+  #chat-container {
+    flex: 2;
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    margin-right: 2rem;
+  }
+
+  #video-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #remote-video, #local-video {
+    width: 100%;
+    max-width: 400px;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+  }
+
+  #chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 1rem;
+  }
+
+  #chat-input {
+    display: flex;
+    padding: 1rem;
+  }
+
+  #message-input {
+    flex-grow: 1;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 5px 0 0 5px;
+  }
+
+  #send-button {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 0 5px 5px 0;
+    cursor: pointer;
+  }
+
+  #controls {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1rem;
+  }
+
+  .control-button {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+
+  .control-button:hover {
+    background-color: #2980b9;
+  }
+
+  #skip-button {
+    background-color: var(--accent-color);
+  }
+
+  #skip-button:hover {
+    background-color: #c0392b;
+  }
+
+  #user-count {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    background-color: var(--primary-color);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-weight: bold;
+  }
+
+  #room-controls {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #room-code {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+  }
+
+  #create-room, #join-room {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 0.5rem;
+    transition: background-color 0.3s ease;
+  }
+
+  #create-room:hover, #join-room:hover {
+    background-color: #27ae60;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .message {
+    animation: fadeIn 0.3s ease-out;
+    margin-bottom: 0.5rem;
+  }
+
+  .user-message {
+    text-align: right;
+    color: var(--primary-color);
+  }
+
+  .other-message {
+    text-align: left;
+    color: var(--text-color);
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>ChatMix</h1>
+  </header>
+
+  <main>
+    <div id="chat-container">
+      <div id="chat-messages"></div>
+      <div id="chat-input">
+        <input type="text" id="message-input" placeholder="Digite sua mensagem...">
+        <button id="send-button">Enviar</button>
+      </div>
+    </div>
+
+    <div id="video-container">
+      <video id="remote-video" autoplay></video>
+      <video id="local-video" autoplay muted></video>
+      <div id="controls">
+        <button id="video-toggle" class="control-button">Ligar/Desligar Câmera</button>
+        <button id="audio-toggle" class="control-button">Ligar/Desligar Microfone</button>
+        <button id="skip-button" class="control-button">Pular</button>
+      </div>
+      <div id="room-controls">
+        <div id="room-code"></div>
+        <button id="create-room">Criar Sala</button>
+        <button id="join-room">Entrar em Sala</button>
+      </div>
+    </div>
+  </main>
+
+  <div id="user-count">Usuários online: <span id="count">0</span></div>
+
+<script>
+const socket = io('https://websim.ai');
+let peer;
+let localStream;
+let remoteStream;
+let roomCode = '';
+
+const chatMessages = document.getElementById('chat-messages');
+const messageInput = document.getElementById('message-input');
+const sendButton = document.getElementById('send-button');
+const videoToggle = document.getElementById('video-toggle');
+const audioToggle = document.getElementById('audio-toggle');
+const skipButton = document.getElementById('skip-button');
+const remoteVideo = document.getElementById('remote-video');
+const localVideo = document.getElementById('local-video');
+const createRoomButton = document.getElementById('create-room');
+const joinRoomButton = document.getElementById('join-room');
+const roomCodeDisplay = document.getElementById('room-code');
+const userCount = document.getElementById('count');
+
+async function initializeMedia() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = localStream;
+  } catch (error) {
+    console.error('Erro ao acessar mídia:', error);
+  }
+}
+
+function createPeer(initiator) {
+  peer = new SimplePeer({
+    initiator: initiator,
+    stream: localStream,
+    trickle: false
+  });
+
+  peer.on('signal', data => {
+    socket.emit('signal', { signal: data, room: roomCode });
+  });
+
+  peer.on('stream', stream => {
+    remoteVideo.srcObject = stream;
+  });
+
+  socket.on('signal', data => {
+    peer.signal(data);
+  });
+
+  return peer;
+}
+
+function connectToNewUser() {
+  socket.emit('find-partner');
+}
+
+socket.on('partner-found', () => {
+  createPeer(true);
+});
+
+socket.on('incoming-call', () => {
+  createPeer(false);
+});
+
+socket.on('user-disconnected', () => {
+  if (peer) {
+    peer.destroy();
+  }
+  remoteVideo.srcObject = null;
+  connectToNewUser();
+});
+
+socket.on('user-count', count => {
+  userCount.textContent = count;
+});
+
+function sendMessage() {
+  const message = messageInput.value.trim();
+  if (message) {
+    socket.emit('chat-message', { message, room: roomCode });
+    addMessageToChat('Você', message, 'user-message');
+    messageInput.value = '';
+  }
+}
+
+socket.on('chat-message', data => {
+  addMessageToChat('Parceiro', data.message, 'other-message');
+});
+
+function addMessageToChat(sender, message, className) {
+  const messageElement = document.createElement('div');
+  messageElement.classList.add('message', className);
+  messageElement.textContent = `${sender}: ${message}`;
+  chatMessages.appendChild(messageElement);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+sendButton.addEventListener('click', sendMessage);
+messageInput.addEventListener('keypress', event => {
+  if (event.key === 'Enter') {
+    sendMessage();
+  }
+});
+
+videoToggle.addEventListener('click', () => {
+  const videoTrack = localStream.getVideoTracks()[0];
+  videoTrack.enabled = !videoTrack.enabled;
+  videoToggle.textContent = videoTrack.enabled ? 'Desligar Câmera' : 'Ligar Câmera';
+});
+
+audioToggle.addEventListener('click', () => {
+  const audioTrack = localStream.getAudioTracks()[0];
+  audioTrack.enabled = !audioTrack.enabled;
+  audioToggle.textContent = audioTrack.enabled ? 'Desligar Microfone' : 'Ligar Microfone';
+});
+
+skipButton.addEventListener('click', () => {
+  if (peer) {
+    peer.destroy();
+  }
+  remoteVideo.srcObject = null;
+  connectToNewUser();
+});
+
+createRoomButton.addEventListener('click', () => {
+  roomCode = Math.random().toString(36).substr(2, 6).toUpperCase();
+  socket.emit('create-room', roomCode);
+  roomCodeDisplay.textContent = `Código da sala: ${roomCode}`;
+});
+
+joinRoomButton.addEventListener('click', () => {
+  const code = prompt('Digite o código da sala:');
+  if (code) {
+    roomCode = code.toUpperCase();
+    socket.emit('join-room', roomCode);
+  }
+});
+
+socket.on('room-joined', (success) => {
+  if (success) {
+    roomCodeDisplay.textContent = `Sala: ${roomCode}`;
+    createPeer(false);
+  } else {
+    alert('Sala não encontrada ou cheia.');
+  }
+});
+
+initializeMedia();
+connectToNewUser();
+</script>
+</body></html>
